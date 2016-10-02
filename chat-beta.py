@@ -15,21 +15,6 @@ def get_self_ip():
     return ip
 
 
-start_msgs = ['now with networking',
-              'with 50% less bees',
-              'S Y N E R G Y',
-              'no girls allowed',
-              'make local networking great again']
-sock_rcv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-sock_snd = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-log = []
-term = Terminal()
-print(term.enter_fullscreen)
-
-self_ip = get_self_ip()
-self_addr = (self_ip, 10002)
-
-
 def print_intro():
     y = int(term.height/2-3)
     ip_spacing = round((term.width - len(self_ip))//2)-1
@@ -66,12 +51,6 @@ def get_self_name():
         return input('screen name: '.rjust(round(term.width / 2)))
 
 
-partner_ip = get_partner_ip()
-partner_addr = (partner_ip, 10001)
-self_name = get_self_name()
-partner_name = 'Anon'
-
-
 def startup():
     print(term.clear)
     with term.location(0, int(term.height/2)):
@@ -81,9 +60,8 @@ def startup():
 def main():
     startup()
 
-    #threading.Thread(target=receiver).start()
-    #threading.Thread(target=sender).start()
-    threading.Thread(target=logger).start()
+    threading.Thread(target=sender).start()
+    # threading.Thread(target=logger).start()
 
     log.append((datetime.now().strftime('%H:%M:%S'), 'System', 'connected to ' + partner_ip))
 
@@ -129,15 +107,17 @@ def logger():
 
 def receiver():
     global partner_name
+    last_error = None
     connection = None
+    sock_rcv.bind(self_addr)
     while not connection:
         try:
-            sock_rcv.bind(self_addr)
             sock_rcv.listen()
             connection, client_address = sock_rcv.accept()
         except OSError:
-            log.append((datetime.now().strftime('%H:%M:%S'), 'System', 'Failed to receive connection.'))
-            time.sleep(1)
+            if last_error is not OSError:
+                last_error = OSError
+                log.append((datetime.now().strftime('%H:%M:%S'), 'System', 'Failed to receive connection.'))
 
     while True:
         data = connection.recv(4096)
@@ -146,24 +126,51 @@ def receiver():
             if text[0] == '-':
                 text = text[1:].split(' ')
                 if text[0] == 'setname':
-                    partner_name = text[0]
-            log.append((datetime.now().strftime('%H:%M:%S'), partner_name, text))
+                    partner_name = text[1]
+                    log.append((datetime.now().strftime('%H:%M:%S'), 'System', 'Connected to {}.'.format(partner_name)))
+                if text[0] == 'q':
+                    log.append((datetime.now().strftime('%H:%M:%S'), 'System', '{} has closed the connection.'.format(partner_name)))
+            else:
+                log.append((datetime.now().strftime('%H:%M:%S'), partner_name, text))
 
 
 def sender():
-    try:
-        sock_snd.connect(partner_addr)
-    except ConnectionRefusedError:
-        log.append((datetime.now().strftime('%H:%M:%S'), 'System', 'Failed to receive connection.'))
-        time.sleep(1)
+    last_error = None
 
-    sock_snd.sendall(bytearray('-setname ' + self_name, 'utf-8'))
+    connected = False
+    while not connected:
+        try:
+            sock_snd.connect(partner_addr)
+            sock_snd.sendall(bytearray('-setname ' + self_name, 'utf-8'))
+            connected = True
+        except ConnectionRefusedError as e:
+            if last_error is not ConnectionRefusedError:
+                last_error = e
+                log.append((datetime.now().strftime('%H:%M:%S'), 'System', 'Failed to send connection.'))
+            time.sleep(1)
+        except BrokenPipeError as e:
+            if last_error is not BrokenPipeError:
+                last_error = e
+                log.append((datetime.now().strftime('%H:%M:%S'), 'System', 'Failed to send data.'))
+            time.sleep(1)
+        except OSError:
+            if last_error is not OSError:
+                last_error = OSError
+                log.append((datetime.now().strftime('%H:%M:%S'), 'System', 'Problem with partner\'s IP address.'))
+            time.sleep(1)
 
-    while True:
+    exit = False
+    while not exit:
         with term.location(0, term.height-1):
             message = input()
-        sock_snd.sendall(bytearray(message, 'utf-8'))
-        log.append((datetime.now().strftime('%H:%M:%S'), self_name, message))
+        if message.startswith('-'):
+            if message.strip('-') == 'q':
+                exit = True
+        try:
+            sock_snd.sendall(bytearray(message, 'utf-8'))
+            log.append((datetime.now().strftime('%H:%M:%S'), self_name, message))
+        except BrokenPipeError:
+            log.append((datetime.now().strftime('%H:%M:%S'), 'System', 'Message "{0}" not sent.'.format(message)))
 
 
 def writer():
@@ -193,7 +200,7 @@ def colorise(item, max_char):
     elif item[2][0] == '>':
         out_string = '[' + item[0] + '] ' + item[1].rjust(max_char) + ': ' + term.green + item[2] + term.normal
     else:
-        out_string = '[' + item[0] + '] ' + item[1].rjust(max_char) + ': ' + item[2]
+        out_string = '[' + item[0] + '] ' + item[1].rjust(max_char) + ': ' + str(item[2])
 
     if len(out_string) > term.width:
         for i in range(term.width, len(out_string), term.width):
@@ -201,5 +208,25 @@ def colorise(item, max_char):
 
     return out_string
 
+if __name__ == '__main__':
+    start_msgs = ['now with networking',
+                  'with 50% less bees',
+                  'S Y N E R G Y',
+                  'no girls allowed',
+                  'make local networking great again']
+    partner_name = 'Anon'
+    sock_rcv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock_snd = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    log = []
+    term = Terminal()
+    print(term.enter_fullscreen)
 
-main()
+    self_ip = get_self_ip()
+    self_addr = (self_ip, 10007)
+    threading.Thread(target=receiver).start()
+
+    partner_ip = get_partner_ip()
+    partner_addr = (partner_ip, 10008)
+    self_name = get_self_name()
+
+    main()
